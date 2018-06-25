@@ -1141,3 +1141,13 @@ func MultipleTypesRequested(args []string) bool {
 	}
 	return rKinds.Len() > 1
 }
+
+func AnyCategoryRequested(categoryExpander restmapper.CategoryExpander, args []string) bool {
+	for _, arg := range args {
+		_, ok := categoryExpander.Expand(arg)
+		if ok {
+			return true
+		}
+	}
+	return false
+}

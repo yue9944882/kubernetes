@@ -46,6 +46,7 @@ import (
 	"k8s.io/kubernetes/pkg/kubectl/util/i18n"
 	"k8s.io/kubernetes/pkg/printers"
 	"k8s.io/kubernetes/pkg/util/interrupt"
+	"k8s.io/kubernetes/staging/src/k8s.io/client-go/restmapper"
 )
 
 // GetOptions contains the input to the get command.
@@ -224,9 +225,12 @@ func (o *GetOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []stri
 
 	o.IncludeUninitialized = cmdutil.ShouldIncludeUninitialized(cmd, false)
 
-	if resource.MultipleTypesRequested(args) {
+	discoveryClient, discoveryErr := f.ToDiscoveryClient()
+	if resource.MultipleTypesRequested(args) ||
+		(discoveryErr == nil && resource.AnyCategoryRequested(restmapper.NewDiscoveryCategoryExpander(discoveryClient), args)) {
 		o.PrintFlags.EnsureWithKind()
 	}
+
 	o.ToPrinter = func(mapping *meta.RESTMapping, withNamespace bool) (printers.ResourcePrinterFunc, error) {
 		// make a new copy of current flags / opts before mutating
 		printFlags := o.PrintFlags.Copy()
