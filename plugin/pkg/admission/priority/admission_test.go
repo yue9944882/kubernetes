@@ -28,17 +28,18 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	api "k8s.io/kubernetes/pkg/apis/core"
 	"k8s.io/kubernetes/pkg/apis/scheduling"
-	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
+	"k8s.io/client-go/informers"
 	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/features"
+	schedulingv1beta1 "k8s.io/api/scheduling/v1beta1"
 )
 
-func addPriorityClasses(ctrl *priorityPlugin, priorityClasses []*scheduling.PriorityClass) {
+func addPriorityClasses(ctrl *priorityPlugin, priorityClasses []*schedulingv1beta1.PriorityClass) {
 	informerFactory := informers.NewSharedInformerFactory(nil, controller.NoResyncPeriodFunc())
-	ctrl.SetInternalKubeInformerFactory(informerFactory)
+	ctrl.SetExternalKubeInformerFactory(informerFactory)
 	// First add the existing classes to the cache.
 	for _, c := range priorityClasses {
-		informerFactory.Scheduling().InternalVersion().PriorityClasses().Informer().GetStore().Add(c)
+		informerFactory.Scheduling().V1beta1().PriorityClasses().Informer().GetStore().Add(c)
 	}
 }
 
