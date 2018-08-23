@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"io"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/admission"
-	api "k8s.io/kubernetes/pkg/apis/core"
-	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
-	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
+	genericadmissioninitializer "k8s.io/apiserver/pkg/admission/initializer"
+	"k8s.io/client-go/kubernetes"
 )
 
 const (
@@ -52,7 +52,7 @@ func Register(plugins *admission.Plugins) {
 // a pod using host based configurations.
 type DenyExec struct {
 	*admission.Handler
-	client internalclientset.Interface
+	client kubernetes.Interface
 
 	// these flags control which items will be checked to deny exec/attach
 	hostNetwork bool
@@ -63,7 +63,7 @@ type DenyExec struct {
 
 var _ admission.ValidationInterface = &DenyExec{}
 
-var _ = kubeapiserveradmission.WantsInternalKubeClientSet(&DenyExec{})
+var _ = genericadmissioninitializer.WantsExternalKubeClientSet(&DenyExec{})
 
 // NewDenyEscalatingExec creates a new admission controller that denies an exec operation on a pod
 // using host based configurations.
@@ -100,24 +100,21 @@ func (d *DenyExec) Validate(a admission.Attributes) (err error) {
 	if path != "pods/exec" && path != "pods/attach" {
 		return nil
 	}
-	pod, err := d.client.Core().Pods(a.GetNamespace()).Get(a.GetName(), metav1.GetOptions{})
+	pod, err := d.client.CoreV1().Pods(a.GetNamespace()).Get(a.GetName(), metav1.GetOptions{})
 	if err != nil {
 		return admission.NewForbidden(a, err)
 	}
 
-	if pod.Spec.SecurityContext != nil {
-		securityContext := pod.Spec.SecurityContext
-		if d.hostNetwork && securityContext.HostNetwork {
-			return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host network"))
-		}
+	if d.hostNetwork && pod.Spec.HostNetwork {
+		return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host network"))
+	}
 
-		if d.hostPID && securityContext.HostPID {
-			return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host pid"))
-		}
+	if d.hostPID && pod.Spec.HostPID {
+		return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host pid"))
+	}
 
-		if d.hostIPC && securityContext.HostIPC {
-			return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host ipc"))
-		}
+	if d.hostIPC && pod.Spec.HostIPC {
+		return admission.NewForbidden(a, fmt.Errorf("cannot exec into or attach to a container using host ipc"))
 	}
 
 	if d.privileged && isPrivileged(pod) {
@@ -128,7 +125,7 @@ func (d *DenyExec) Validate(a admission.Attributes) (err error) {
 }
 
 // isPrivileged will return true a pod has any privileged containers
-func isPrivileged(pod *api.Pod) bool {
+func isPrivileged(pod *corev1.Pod) bool {
 	for _, c := range pod.Spec.InitContainers {
 		if c.SecurityContext == nil || c.SecurityContext.Privileged == nil {
 			continue
@@ -149,7 +146,7 @@ func isPrivileged(pod *api.Pod) bool {
 }
 
 // SetInternalKubeClientSet implements the WantsInternalKubeClientSet interface.
-func (d *DenyExec) SetInternalKubeClientSet(client internalclientset.Interface) {
+func (d *DenyExec) SetExternalKubeClientSet(client kubernetes.Interface) {
 	d.client = client
 }
 
