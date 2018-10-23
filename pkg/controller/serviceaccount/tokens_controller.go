@@ -25,6 +25,7 @@ import (
 	"k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -50,6 +51,8 @@ var RemoveTokenBackoff = wait.Backoff{
 	Duration: 100 * time.Millisecond,
 	Jitter:   1.0,
 }
+
+const secretSyncPeriod = 100 * time.Second
 
 // TokensControllerOptions contains options for the TokensController
 type TokensControllerOptions struct {
@@ -178,8 +181,31 @@ func (e *TokensController) Run(workers int, stopCh <-chan struct{}) {
 		go wait.Until(e.syncServiceAccount, 0, stopCh)
 		go wait.Until(e.syncSecret, 0, stopCh)
 	}
+	go wait.Until(e.secretSyncLoop, secretSyncPeriod, stopCh)
 	<-stopCh
 	glog.V(1).Infof("Shutting down")
+}
+
+func (e *TokensController) secretSyncLoop() {
+	serviceAccounts, err := e.serviceAccounts.List(labels.Everything())
+	if err != nil {
+		glog.Errorf("Failed to retrieve current set of service accounts from node lister: %v", err)
+		return
+	}
+	for _, serviceAccount := range serviceAccounts {
+		hasToken, err := e.hasReferencedToken(serviceAccount)
+		if err != nil {
+			glog.Errorf("Failed to find referenced token for service account %v/%v: %v", serviceAccount.Namespace, serviceAccount.Name, err)
+			return
+		}
+		if !hasToken {
+			_, err := e.ensureReferencedToken(serviceAccount)
+			if err != nil {
+				glog.Errorf("Failed to ensure token for service accounts %v/%v: %v", serviceAccount.Namespace, serviceAccount.Name, err)
+				return
+			}
+		}
+	}
 }
 
 func (e *TokensController) queueServiceAccountSync(obj interface{}) {
@@ -686,7 +712,7 @@ func (e *TokensController) getSecret(ns string, name string, uid types.UID, fetc
 // listTokenSecrets returns a list of all of the ServiceAccountToken secrets that
 // reference the given service account's name and uid
 func (e *TokensController) listTokenSecrets(serviceAccount *v1.ServiceAccount) ([]*v1.Secret, error) {
-	namespaceSecrets, err := e.updatedSecrets.ByIndex("namespace", serviceAccount.Namespace)
+	namespaceSecrets, err := e.updatedSecrets.ByIndex(cache.NamespaceIndex, serviceAccount.Namespace)
 	if err != nil {
 		return nil, err
 	}
