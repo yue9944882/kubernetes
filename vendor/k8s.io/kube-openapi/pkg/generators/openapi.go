@@ -312,6 +312,7 @@ func (g openAPITypeWriter) generateCall(t *types.Type) error {
 }
 
 func (g openAPITypeWriter) generate(t *types.Type) error {
+	fmt.Println("===================*******")
 	// Only generate for struct type and ignore the rest
 	switch t.Kind {
 	case types.Struct:
