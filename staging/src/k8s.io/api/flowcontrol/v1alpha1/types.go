@@ -268,42 +268,77 @@ type PriorityLevelConfigurationList struct {
 }
 
 // PriorityLevelConfigurationSpec is specification of a priority level
+// +union
 type PriorityLevelConfigurationSpec struct {
-	// `assuredConcurrencyShares` must be a positive number for a non-exempt priority level. The concurrency limit of an apiserver
-	// is divided among the non-exempt priority levels in proportion to their assured concurrency shares. Basically this produces
-	// the assured concurrency value (ACV) for each priority level:
+	// `queuingType` indicates whether this priority level does
+	// queuing or is exempt.  Valid values are "queuing" and "exempt",
+	// and this field defaults to "queuing".  "exempt" means that
+	// requests of this priority level are not subject to concurrency
+	// limits (and thus are never queued) and do not detract from the
+	// concurrency available for non-exempt requests.
+	// +unionDiscriminator
+	// +optional
+	QueuingType PriorityLevelQueueingType `json:"queuingType,omitempty" protobuf:"varint,1,opt,name=queuingType"`
+
+	// `queuingConfig` holds the configuration parameters that are
+	// only meaningful for a priority level that does queuing (i.e.,
+	// is not exempt).  This field must be non-empty if and only if
+	// `queuingType` is `"queuing"`.
+	// +optional
+	QueuingConfig *QueuingConfiguration `json:"queuingConfig,omitempty" protobuf:"bytes,2,opt,name=queuingConfig"`
+}
+
+// PriorityLevelQueueingType identifies the queuing nature of a priority level
+type PriorityLevelQueueingType string
+
+// PriorityLevelDoesQueuing is the PriorityLevelQueueingType for priority levels that queue
+const PriorityLevelDoesQueuing PriorityLevelQueueingType = "queuing"
+
+// PriorityLevelIsExempt is the PriorityLevelQueueingType for priority levels that are exempt from concurrency controls
+const PriorityLevelIsExempt PriorityLevelQueueingType = "exempt"
+
+// QueuingConfiguration holds the configuration parameters that are specific to a priority level that is subject to concurrency controls
+type QueuingConfiguration struct {
+	// `assuredConcurrencyShares` (ACS) must be a positive number. The
+	// API server's concurrency limit (SCL) is divided among the
+	// concurrency-controlled priority levels in proportion to their
+	// assured concurrency shares. This produces the assured
+	// concurrency value (ACV) for each such priority level:
 	//
 	//             ACV(l) = ceil( SCL * ACS(l) / ( sum[priority levels k] ACS(k) ) )
 	//
-	// if not specified, it will be rejected by the api validation.
 	// Required.
 	AssuredConcurrencyShares int32 `json:"assuredConcurrencyShares" protobuf:"varint,1,opt,name=assuredConcurrencyShares"`
-	// `queues` must be a number of queues that belong to a non-exempt PriorityLevelConfiguration object. The queues exist
-	// independently at each apiserver. The value must be positive for a non-exempt priority level and setting it to 1
-	// disables shufflesharding and makes the distinguisher method irrelevant.
-	// if not specified, it will be defaulted to 64.
-	// TODO: sugguest a default or a way of deciding on a value.
+
+	// `queues` is the number of queues for this priority level. The
+	// queues exist independently at each apiserver. The value must be
+	// positive.  Setting it to 1 effectively precludes
+	// shufflesharding and thus makes the distinguisher method of
+	// associated flow schemas irrelevant.  This field has a default
+	// value of 64.
 	// +optional
 	Queues int32 `json:"queues" protobuf:"varint,2,opt,name=queues"`
-	// `handSize` must be a small positive number for applying shuffle sharding. When a request arrives at an apiserver the
-	// request flow identifier’s string pair is hashed and the hash value is used to shuffle the queue indices and deal
-	// a hand of the size specified here. If empty, the hand size will the be set to 1.
-	// NOTE: To figure out a better value for your cluster, please refer to (#76846)[https://github.com/kubernetes/kubernetes/issues/76846#issuecomment-523700960]
-	// if not specified, it will be defaulted to 8.
+
+	// `handSize` is a small positive number that configures the
+	// shuffle sharding of requests into queues.  When a request
+	// arrives at an apiserver the request's flow identifier (a string
+	// pair) is hashed and the hash value is used to shuffle the list
+	// of queues and deal a hand of the size specified here.  The
+	// request is put into one of the shortest queues in that hand.
+	// `handSize` must be no larger than `queues`, and should be
+	// significantly smaller (so that a few heavy flows do not
+	// saturate most of the queues).  See the user-facing
+	// documentation for more extensive guidance on setting this
+	// field.  This field has a default value of 8.
 	// +optional
 	HandSize int32 `json:"handSize" protobuf:"varint,3,opt,name=handSize"`
-	// `queueLengthLimit` must be a length limit applied to each queue belongs to the priority.  The value must be positive
-	// for a non-exempt priority level.
-	// if not specified, it will be defaulted to 50.
+
+	// `queueLengthLimit` is the maximum number of requests allowed to
+	// be waiting in a given queue of this priority level at a time;
+	// excess requests are rejected.  This value must be positive.  If
+	// not specified, it will be defaulted to 50.
 	// +optional
 	QueueLengthLimit int32 `json:"queueLengthLimit" protobuf:"varint,4,opt,name=queueLengthLimit"`
-	// `exempt` defines whether the priority level is exempted or not.  There should be at most one exempt priority level.
-	// Being exempt means that requests of that priority are not subject to concurrency limits (and thus are never queued)
-	// and do not detract from the concurrency available for non-exempt requests. The field is default to false and only those system
-	// preset priority level can be exempt.
-	// if not specified, defaulted to non-exempt i.e. false.
-	// +optional
-	Exempt bool `json:"exempt,omitempty" protobuf:"varint,5,opt,name=exempt"`
 }
 
 // PriorityLevelConfigurationConditionType is a valid value for PriorityLevelConfigurationStatusCondition.Type
