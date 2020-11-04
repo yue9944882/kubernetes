@@ -1,13 +1,7 @@
-package(default_visibility = ["//visibility:public"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_test",
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "go_default_test",
-    size = "large",
     srcs = [
         "apiserver_test.go",
         "main_test.go",
@@ -17,11 +11,7 @@ go_test(
         "print_test.go",
         "watchcache_test.go",
     ],
-    rundir = ".",
-    tags = [
-        "etcd",
-        "integration",
-    ],
+    tags = ["integration"],
     deps = [
         "//cmd/kube-apiserver/app/options:go_default_library",
         "//pkg/api/legacyscheme:go_default_library",
@@ -38,6 +28,7 @@ go_test(
         "//staging/src/k8s.io/api/discovery/v1beta1:go_default_library",
         "//staging/src/k8s.io/api/extensions/v1beta1:go_default_library",
         "//staging/src/k8s.io/api/flowcontrol/v1alpha1:go_default_library",
+        "//staging/src/k8s.io/api/flowcontrol/v1beta1:go_default_library",
         "//staging/src/k8s.io/api/node/v1:go_default_library",
         "//staging/src/k8s.io/api/node/v1alpha1:go_default_library",
         "//staging/src/k8s.io/api/node/v1beta1:go_default_library",
@@ -101,4 +92,5 @@ filegroup(
         "//test/integration/apiserver/podlogs:all-srcs",
     ],
     tags = ["automanaged"],
+    visibility = ["//visibility:public"],
 )
