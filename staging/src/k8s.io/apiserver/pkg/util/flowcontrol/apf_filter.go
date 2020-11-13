@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/clock"
+	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/server/mux"
 	"k8s.io/apiserver/pkg/util/flowcontrol/counter"
 	fq "k8s.io/apiserver/pkg/util/flowcontrol/fairqueuing"
@@ -96,10 +97,47 @@ func NewTestable(
 	return newTestableController(informerFactory, flowcontrolClient, serverConcurrencyLimit, requestWaitLimit, obsPairGenerator, queueSetFactory)
 }
 
+// appendUnauthenticatedGroupIfNotInKnownGroups modifies the passed request
+// digest to append system:unauthenticated if the none of the user's groups
+// matches the list of known groups.
+func appendUnauthenticatedGroupIfNotInKnownGroups(requestDigest *RequestDigest) {
+	wantGroups := []string{user.AllAuthenticated, user.AllUnauthenticated}
+	for _, wantGroup := range wantGroups {
+		for _, haveGroup := range requestDigest.User.GetGroups() {
+			if haveGroup == wantGroup {
+				return
+			}
+		}
+	}
+	klog.Errorf("request digest with request info %#+v and user %#+v not a part %v, appending %q group", requestDigest.RequestInfo, requestDigest.User, wantGroups, user.AllUnauthenticated)
+	requestDigest.User = &user.DefaultInfo{
+		Name:   requestDigest.User.GetName(),
+		UID:    requestDigest.User.GetUID(),
+		Groups: append(requestDigest.User.GetGroups(), user.AllUnauthenticated),
+		Extra:  requestDigest.User.GetExtra(),
+	}
+}
+
+// assumeAnonymousUserIfNotPresent modifies the passed request digest to set
+// the user's name if unset.
+func assumeAnonymousUserIfUnset(requestDigest *RequestDigest) {
+	if requestDigest.User.GetName() == "" {
+		klog.Errorf("request digest with request info %#+v and user %#+v has no name, assuming %q", requestDigest.RequestInfo, requestDigest.User, user.Anonymous)
+		requestDigest.User = &user.DefaultInfo{
+			Name:   user.Anonymous,
+			UID:    requestDigest.User.GetUID(),
+			Groups: requestDigest.User.GetGroups(),
+			Extra:  requestDigest.User.GetExtra(),
+		}
+	}
+}
+
 func (cfgCtlr *configController) Handle(ctx context.Context, requestDigest RequestDigest,
 	noteFn func(fs *flowcontrol.FlowSchema, pl *flowcontrol.PriorityLevelConfiguration),
 	queueNoteFn fq.QueueNoteFn,
 	execFn func()) {
+	assumeAnonymousUserIfUnset(&requestDigest)
+	appendUnauthenticatedGroupIfNotInKnownGroups(&requestDigest)
 	fs, pl, isExempt, req, startWaitingTime := cfgCtlr.startRequest(ctx, requestDigest, queueNoteFn)
 	queued := startWaitingTime != time.Time{}
 	noteFn(fs, pl)
