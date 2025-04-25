@@ -63,7 +63,7 @@ func (pl *PodTopologySpread) buildDefaultConstraints(p *v1.Pod, action v1.Unsati
 	if err != nil || len(constraints) == 0 {
 		return nil, err
 	}
-	selector := helper.DefaultSelector(p, pl.services, pl.replicationCtrls, pl.replicaSets, pl.statefulSets)
+	selector := helper.DefaultSelector(pl.parallelizer, p, pl.services, pl.replicationCtrls, pl.replicaSets, pl.statefulSets)
 	if selector.Empty() {
 		return nil, nil
 	}

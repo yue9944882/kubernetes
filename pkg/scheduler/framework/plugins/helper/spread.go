@@ -17,6 +17,7 @@ limitations under the License.
 package helper
 
 import (
+	"context"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	appslisters "k8s.io/client-go/listers/apps/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
+	"k8s.io/kubernetes/pkg/scheduler/framework/parallelize"
 )
 
 var (
@@ -35,6 +37,7 @@ var (
 // DefaultSelector returns a selector deduced from the Services, Replication
 // Controllers, Replica Sets, and Stateful Sets matching the given pod.
 func DefaultSelector(
+	parallelizer parallelize.Parallelizer,
 	pod *v1.Pod,
 	sl corelisters.ServiceLister,
 	cl corelisters.ReplicationControllerLister,
@@ -45,7 +48,7 @@ func DefaultSelector(
 	// Since services, RCs, RSs and SSs match the pod, they won't have conflicting
 	// labels. Merging is safe.
 
-	if services, err := GetPodServices(sl, pod); err == nil {
+	if services, err := GetPodServices(parallelizer, sl, pod); err == nil {
 		for _, service := range services {
 			labelSet = labels.Merge(labelSet, service.Spec.Selector)
 		}
@@ -93,24 +96,32 @@ func DefaultSelector(
 }
 
 // GetPodServices gets the services that have the selector that match the labels on the given pod.
-func GetPodServices(sl corelisters.ServiceLister, pod *v1.Pod) ([]*v1.Service, error) {
+func GetPodServices(
+	parallelizer parallelize.Parallelizer,
+	sl corelisters.ServiceLister,
+	pod *v1.Pod) ([]*v1.Service, error) {
 	allServices, err := sl.Services(pod.Namespace).List(labels.Everything())
 	if err != nil {
 		return nil, err
 	}
 
-	var services []*v1.Service
-	for i := range allServices {
-		service := allServices[i]
+	serviceCh := make(chan *v1.Service, len(allServices))
+	matchFunc := func(idx int) {
+		service := allServices[idx]
 		if service.Spec.Selector == nil {
 			// services with nil selectors match nothing, not everything.
-			continue
+			return
 		}
 		selector := labels.Set(service.Spec.Selector).AsSelectorPreValidated()
 		if selector.Matches(labels.Set(pod.Labels)) {
-			services = append(services, service)
+			serviceCh <- allServices[idx]
 		}
 	}
-
+	parallelizer.Until(context.TODO(), len(allServices), matchFunc, "ServiceSelectorMatch")
+	close(serviceCh)
+	var services []*v1.Service
+	for svc := range serviceCh {
+		services = append(services, svc)
+	}
 	return services, nil
 }
