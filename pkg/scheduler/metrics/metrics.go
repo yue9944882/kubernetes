@@ -123,6 +123,8 @@ var (
 	PreemptionGoroutinesDuration       *metrics.HistogramVec
 	PreemptionGoroutinesExecutionTotal *metrics.CounterVec
 
+	EquivalenceCacheHits *metrics.CounterVec
+
 	// metricsList is a list of all metrics that should be registered always, regardless of any feature gate's value.
 	metricsList []metrics.Registerable
 )
@@ -346,6 +348,15 @@ func InitMetrics() {
 		},
 		[]string{"result"})
 
+	EquivalenceCacheHits = metrics.NewCounterVec(
+		&metrics.CounterOpts{
+			Subsystem:      SchedulerSubsystem,
+			Name:           "equivalence_cache_hits_total",
+			Help:           "Number of equivalence cache hits.",
+			StabilityLevel: metrics.ALPHA,
+		},
+		[]string{"plugin", "result"})
+
 	metricsList = []metrics.Registerable{
 		scheduleAttempts,
 		schedulingLatency,
@@ -365,6 +376,7 @@ func InitMetrics() {
 		SchedulerCacheSize,
 		unschedulableReasons,
 		PluginEvaluationTotal,
+		EquivalenceCacheHits,
 	}
 }
 

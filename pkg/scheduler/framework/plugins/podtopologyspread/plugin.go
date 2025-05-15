@@ -18,7 +18,9 @@ package podtopologyspread
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/dump"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -77,6 +79,7 @@ var _ framework.FilterPlugin = &PodTopologySpread{}
 var _ framework.PreScorePlugin = &PodTopologySpread{}
 var _ framework.ScorePlugin = &PodTopologySpread{}
 var _ framework.EnqueueExtensions = &PodTopologySpread{}
+var _ framework.CachablePlugin = &PodTopologySpread{}
 
 // Name is the name of the plugin used in the plugin registry and configurations.
 const Name = names.PodTopologySpread
@@ -348,4 +351,22 @@ func checkTopologyKeyLabelsChanged(originalLabels, modifiedLabels map[string]str
 		}
 	}
 	return false
+}
+
+func (pl *PodTopologySpread) PodEquivalenceHashFunc() framework.PodHashFunc {
+	return func(pod *v1.Pod) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(pod.Labels)))
+		hasher.Write([]byte(dump.ForHash(pod.Spec.TopologySpreadConstraints)))
+		return hasher.Sum(nil)
+	}
+}
+
+func (pl *PodTopologySpread) NodeEquivalenceHashFunc() framework.NodeHashFunc {
+	return func(info *framework.NodeInfo) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(info.Node().Labels)))
+		hasher.Write([]byte(dump.ForHash(info.Node().Spec.Taints)))
+		return hasher.Sum(nil)
+	}
 }

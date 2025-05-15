@@ -18,7 +18,9 @@ package interpodaffinity
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/dump"
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -42,6 +44,7 @@ var _ framework.FilterPlugin = &InterPodAffinity{}
 var _ framework.PreScorePlugin = &InterPodAffinity{}
 var _ framework.ScorePlugin = &InterPodAffinity{}
 var _ framework.EnqueueExtensions = &InterPodAffinity{}
+var _ framework.CachablePlugin = &InterPodAffinity{}
 
 // InterPodAffinity is a plugin that checks inter pod affinity
 type InterPodAffinity struct {
@@ -297,3 +300,20 @@ func (pl *InterPodAffinity) isSchedulableAfterNodeChange(logger klog.Logger, pod
 		"pod", klog.KObj(pod), "node", klog.KObj(modifiedNode))
 	return framework.QueueSkip, nil
 }
+
+func (pl *InterPodAffinity) PodEquivalenceHashFunc() framework.PodHashFunc {
+	return func(pod *v1.Pod) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(pod.Spec.Affinity)))
+		return hasher.Sum(nil)
+	}
+}
+
+func (pl *InterPodAffinity) NodeEquivalenceHashFunc() framework.NodeHashFunc {
+	return func(info *framework.NodeInfo) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(info.Node().Labels)))
+		return hasher.Sum(nil)
+	}
+}
+

@@ -18,10 +18,11 @@ package tainttoleration
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
-
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/dump"
 	v1helper "k8s.io/component-helpers/scheduling/corev1"
 	"k8s.io/klog/v2"
 	"k8s.io/kubernetes/pkg/scheduler/framework"
@@ -41,6 +42,7 @@ var _ framework.FilterPlugin = &TaintToleration{}
 var _ framework.PreScorePlugin = &TaintToleration{}
 var _ framework.ScorePlugin = &TaintToleration{}
 var _ framework.EnqueueExtensions = &TaintToleration{}
+var _ framework.CachablePlugin = &TaintToleration{}
 
 const (
 	// Name is the name of the plugin used in the plugin registry and configurations.
@@ -226,4 +228,20 @@ func (pl *TaintToleration) isSchedulableAfterPodTolerationChange(logger klog.Log
 	logger.V(5).Info("a new toleration is added for a Pod, but it's an unrelated Pod and wouldn't change the TaintToleration plugin's decision", "pod", klog.KObj(modifiedPod))
 
 	return framework.QueueSkip, nil
+}
+
+func (pl *TaintToleration) PodEquivalenceHashFunc() framework.PodHashFunc {
+	return func(pod *v1.Pod) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(pod.Spec.Tolerations)))
+		return hasher.Sum(nil)
+	}
+}
+
+func (pl *TaintToleration) NodeEquivalenceHashFunc() framework.NodeHashFunc {
+	return func(info *framework.NodeInfo) []byte {
+		hasher := sha256.New()
+		hasher.Write([]byte(dump.ForHash(info.Node().Spec.Taints)))
+		return hasher.Sum(nil)
+	}
 }

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"k8s.io/kubernetes/pkg/scheduler/framework/equivalence"
 	"reflect"
 	"sort"
 	"time"
@@ -397,6 +398,7 @@ func NewFramework(ctx context.Context, r Registry, profile *config.KubeScheduler
 
 	// Logs Enabled Plugins at each extension point, taking default plugins, given config, and multipoint into consideration
 	logger.V(2).Info("the scheduler starts to work with those plugins", "Plugins", *f.ListPlugins())
+	f.setCachablePlugins(f.snapshotSharedLister)
 	f.setInstrumentedPlugins()
 	return f, nil
 }
@@ -429,6 +431,15 @@ func (f *frameworkImpl) setInstrumentedPlugins() {
 			ScorePlugin: f.scorePlugins[i],
 			metric:      metrics.PluginEvaluationTotal.WithLabelValues(pl.Name(), metrics.Score, f.profileName),
 		}
+	}
+}
+
+func (f *frameworkImpl) setCachablePlugins(snapshotLister framework.SharedLister) {
+	for i, pl := range f.filterPlugins {
+		f.filterPlugins[i] = equivalence.NewCachableFilterPlugin(pl)
+	}
+	for i, pl := range f.scorePlugins {
+		f.scorePlugins[i] = equivalence.NewCachableScorePlugin(pl, snapshotLister)
 	}
 }
 

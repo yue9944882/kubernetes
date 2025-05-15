@@ -952,3 +952,12 @@ type PluginsRunner interface {
 	// status other than Success.
 	RunPreFilterExtensionRemovePod(ctx context.Context, state *CycleState, podToSchedule *v1.Pod, podInfoToRemove *PodInfo, nodeInfo *NodeInfo) *Status
 }
+
+type PodHashFunc func(*v1.Pod) []byte
+
+type NodeHashFunc func(*NodeInfo) []byte
+
+type CachablePlugin interface {
+	PodEquivalenceHashFunc() PodHashFunc
+	NodeEquivalenceHashFunc() NodeHashFunc
+}
