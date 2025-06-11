@@ -726,8 +726,9 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}, isInInitialList bool
 	s.blockDeltas.Lock()
 	defer s.blockDeltas.Unlock()
 
+	sem := make(chan struct{}, 256)
 	if deltas, ok := obj.(Deltas); ok {
-		return processDeltas(s, s.indexer, deltas, isInInitialList)
+		return processDeltas(s, s.indexer, deltas, isInInitialList, sem)
 	}
 	return errors.New("object given as Process argument is not Deltas")
 }

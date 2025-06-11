@@ -21,6 +21,7 @@ import (
 	"errors"
 	clientgofeaturegate "k8s.io/client-go/features"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -547,6 +548,8 @@ func NewTransformingIndexerInformer(
 	return clientState, newInformer(clientState, options)
 }
 
+var Write = &atomic.Int32{}
+
 // Multiplexes updates in the form of a list of Deltas into a Store, and informs
 // a given handler of events OnUpdate, OnAdd, OnDelete
 func processDeltas(
@@ -555,29 +558,56 @@ func processDeltas(
 	clientState Store,
 	deltas Deltas,
 	isInInitialList bool,
+	sem chan struct{},
 ) error {
 	// from oldest to newest
 	for _, d := range deltas {
 		obj := d.Object
-
 		switch d.Type {
 		case Sync, Replaced, Added, Updated:
 			if old, exists, err := clientState.Get(obj); err == nil && exists {
-				if err := clientState.Update(obj); err != nil {
-					return err
-				}
-				handler.OnUpdate(old, obj)
+				Write.Add(1)
+				//if err := clientState.Update(obj); err != nil {
+				//	return err
+				//}
+				//handler.OnUpdate(old, obj)
+				sem <- struct{}{}
+				go func() {
+					if err := clientState.Update(obj); err != nil {
+						return
+					}
+					handler.OnUpdate(old, obj)
+					<-sem
+				}()
 			} else {
-				if err := clientState.Add(obj); err != nil {
-					return err
-				}
-				handler.OnAdd(obj, isInInitialList)
+				Write.Add(1)
+				//if err := clientState.Add(obj); err != nil {
+				//	return err
+				//}
+				//handler.OnAdd(obj, isInInitialList)
+				sem <- struct{}{}
+				go func() {
+					if err := clientState.Add(obj); err != nil {
+						return
+					}
+					handler.OnAdd(obj, isInInitialList)
+					<-sem
+				}()
 			}
 		case Deleted:
-			if err := clientState.Delete(obj); err != nil {
-				return err
-			}
-			handler.OnDelete(obj)
+			Write.Add(1)
+			//if err := clientState.Delete(obj); err != nil {
+			//	return err
+			//}
+			//handler.OnDelete(obj)
+			sem <- struct{}{}
+			go func() {
+				if err := clientState.Delete(obj); err != nil {
+					return
+				}
+				handler.OnDelete(obj)
+				<-sem
+			}()
 		}
 	}
 	return nil
@@ -605,6 +635,7 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 		})
 	}
 
+	sem := make(chan struct{}, 256)
 	cfg := &Config{
 		Queue:            fifo,
 		ListerWatcher:    options.ListerWatcher,
@@ -614,7 +645,7 @@ func newInformer(clientState Store, options InformerOptions) Controller {
 
 		Process: func(obj interface{}, isInInitialList bool) error {
 			if deltas, ok := obj.(Deltas); ok {
-				return processDeltas(options.Handler, clientState, deltas, isInInitialList)
+				return processDeltas(options.Handler, clientState, deltas, isInInitialList, sem)
 			}
 			return errors.New("object given as Process argument is not Deltas")
 		},
