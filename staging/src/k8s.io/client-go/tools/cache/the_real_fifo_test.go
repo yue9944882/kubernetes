@@ -52,7 +52,7 @@ func testRealFIFOPop(f *RealFIFO) testFifoObject {
 	if val == nil {
 		return testFifoObject{name: closedFIFOName}
 	}
-	return val.(Deltas).Newest().Object.(testFifoObject)
+	return val.([]Deltas)[0].Newest().Object.(testFifoObject)
 }
 
 func emptyKnownObjects() KeyListerGetter {
@@ -248,8 +248,10 @@ func TestRealFIFOW_ReplaceMakesDeletionsForObjectsOnlyInQueue(t *testing.T) {
 func collapseDeltas(ins []interface{}) Deltas {
 	ret := Deltas{}
 	for _, curr := range ins {
-		for _, delta := range curr.(Deltas) {
-			ret = append(ret, delta)
+		for _, deltas := range curr.([]Deltas) {
+			for _, delta := range deltas {
+				ret = append(ret, delta)
+			}
 		}
 	}
 	return ret
@@ -408,7 +410,7 @@ func TestRealFIFO_transformer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("got nothing on try %v?", i)
 		}
-		a := obj.(Deltas)[0]
+		a := obj.([]Deltas)[0][0]
 		e := expected1[i]
 		if !reflect.DeepEqual(e, a) {
 			t.Errorf("%d Expected %+v, got %+v", i, e, a)
@@ -593,7 +595,7 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -622,7 +624,7 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -653,7 +655,7 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -685,7 +687,7 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	}
 
 	for i, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("%d Expected %#v, got %#v", i, e, a)
 		}
@@ -707,7 +709,7 @@ func TestRealFIFO_ReplaceMakesDeletions(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -738,7 +740,7 @@ func TestRealFIFO_ReplaceMakesDeletionsReplaced(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -764,7 +766,7 @@ func TestRealFIFO_UpdateResyncRace(t *testing.T) {
 	}
 
 	for _, expected := range expectedList {
-		cur := Pop(f).(Deltas)
+		cur := Pop(f).([]Deltas)[0]
 		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
@@ -794,8 +796,8 @@ func TestRealFIFO_HasSyncedCorrectOnDeletion(t *testing.T) {
 		if f.HasSynced() {
 			t.Errorf("Expected HasSynced to be false")
 		}
-		cur, initial := pop2[Deltas](f)
-		if e, a := expected, cur; !reflect.DeepEqual(e, a) {
+		cur, initial := pop2[[]Deltas](f)
+		if e, a := expected, cur[0]; !reflect.DeepEqual(e, a) {
 			t.Errorf("Expected %#v, got %#v", e, a)
 		}
 		if initial != true {
