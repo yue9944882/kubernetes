@@ -210,9 +210,9 @@ func (cache *cacheImpl) UpdateSnapshot(logger klog.Logger, nodeSnapshot *Snapsho
 	// status from having pods with required anti-affinity to NOT having pods with required
 	// anti-affinity or the other way around.
 	updateNodesHavePodsWithRequiredAntiAffinity := false
-	// usedPVCSet must be re-created whenever the head node generation is greater than
-	// last snapshot generation.
-	updateUsedPVCSet := false
+
+	// nodesRequiresUpdateUsedPVCSet
+	nodesRequiresUpdateUsedPVCSet := sets.New[string]()
 
 	// Forget all assumed pods from a previous snapshot version.
 	// This is a safety check in case any pod wasn't forgotten in the previous scheduling cycle.
@@ -242,17 +242,10 @@ func (cache *cacheImpl) UpdateSnapshot(logger klog.Logger, nodeSnapshot *Snapsho
 			if (len(existing.PodsWithRequiredAntiAffinity) > 0) != (len(clone.PodsWithRequiredAntiAffinity) > 0) {
 				updateNodesHavePodsWithRequiredAntiAffinity = true
 			}
-			if !updateUsedPVCSet {
-				if len(existing.PVCRefCounts) != len(clone.PVCRefCounts) {
-					updateUsedPVCSet = true
-				} else {
-					for pvcKey := range clone.PVCRefCounts {
-						if _, found := existing.PVCRefCounts[pvcKey]; !found {
-							updateUsedPVCSet = true
-							break
-						}
-					}
-				}
+			if clone.Generation > existing.Generation {
+				// need to flush PVC ref count changes to the new
+				nodesRequiresUpdateUsedPVCSet.Insert(np.Name)
+				updateAllLists = true
 			}
 			// We need to preserve the original pointer of the NodeInfo struct since it
 			// is used in the NodeInfoList, which we may not update.
@@ -272,8 +265,12 @@ func (cache *cacheImpl) UpdateSnapshot(logger klog.Logger, nodeSnapshot *Snapsho
 		updateAllLists = true
 	}
 
-	if updateAllLists || updateNodesHavePodsWithAffinity || updateNodesHavePodsWithRequiredAntiAffinity || updateUsedPVCSet {
-		cache.updateNodeInfoSnapshotList(logger, nodeSnapshot, updateAllLists)
+	if updateAllLists || updateNodesHavePodsWithAffinity || updateNodesHavePodsWithRequiredAntiAffinity || nodesRequiresUpdateUsedPVCSet.Len() > 0 {
+		if updateAllLists {
+			cache.updateAllNodeInfoSnapshotList(logger, nodeSnapshot)
+		} else {
+			cache.updateNodeInfoSnapshotList(logger, nodeSnapshot, nodesRequiresUpdateUsedPVCSet)
+		}
 	}
 
 	if len(nodeSnapshot.nodeInfoList) != cache.nodeTree.numNodes {
@@ -285,7 +282,7 @@ func (cache *cacheImpl) UpdateSnapshot(logger klog.Logger, nodeSnapshot *Snapsho
 		logger.Error(nil, errMsg)
 		// We will try to recover by re-creating the lists for the next scheduling cycle, but still return an
 		// error to surface the problem, the error will likely cause a failure to the current scheduling cycle.
-		cache.updateNodeInfoSnapshotList(logger, nodeSnapshot, true)
+		cache.updateAllNodeInfoSnapshotList(logger, nodeSnapshot)
 		return errors.New(errMsg)
 	}
 
@@ -315,44 +312,46 @@ func (cache *cacheImpl) updatePodGroupStateSnapshot(snapshot *Snapshot) {
 	}
 }
 
-func (cache *cacheImpl) updateNodeInfoSnapshotList(logger klog.Logger, snapshot *Snapshot, updateAll bool) {
+func (cache *cacheImpl) updateAllNodeInfoSnapshotList(logger klog.Logger, snapshot *Snapshot) {
 	snapshot.havePodsWithAffinityNodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
 	snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
 	snapshot.usedPVCSet = sets.New[string]()
-	if updateAll {
-		// Take a snapshot of the nodes order in the tree
-		snapshot.nodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
-		nodesList, err := cache.nodeTree.list()
-		if err != nil {
-			utilruntime.HandleErrorWithLogger(logger, err, "Error occurred while retrieving the list of names of the nodes from node tree")
-		}
-		for _, nodeName := range nodesList {
-			if nodeInfo := snapshot.nodeInfoMap[nodeName]; nodeInfo != nil {
-				snapshot.nodeInfoList = append(snapshot.nodeInfoList, nodeInfo)
-				if len(nodeInfo.PodsWithAffinity) > 0 {
-					snapshot.havePodsWithAffinityNodeInfoList = append(snapshot.havePodsWithAffinityNodeInfoList, nodeInfo)
-				}
-				if len(nodeInfo.PodsWithRequiredAntiAffinity) > 0 {
-					snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = append(snapshot.havePodsWithRequiredAntiAffinityNodeInfoList, nodeInfo)
-				}
-				for key := range nodeInfo.PVCRefCounts {
-					snapshot.usedPVCSet.Insert(key)
-				}
-			} else {
-				utilruntime.HandleErrorWithLogger(logger, nil, "Node exists in nodeTree but not in NodeInfoMap, this should not happen", "node", klog.KRef("", nodeName))
-			}
-		}
-	} else {
-		for _, nodeInfo := range snapshot.nodeInfoList {
-			if len(nodeInfo.GetPodsWithAffinity()) > 0 {
+	// Take a snapshot of the nodes order in the tree
+	snapshot.nodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
+	nodesList, err := cache.nodeTree.list()
+	if err != nil {
+		utilruntime.HandleErrorWithLogger(logger, err, "Error occurred while retrieving the list of names of the nodes from node tree")
+	}
+	for _, nodeName := range nodesList {
+		if nodeInfo := snapshot.nodeInfoMap[nodeName]; nodeInfo != nil {
+			snapshot.nodeInfoList = append(snapshot.nodeInfoList, nodeInfo)
+			if len(nodeInfo.PodsWithAffinity) > 0 {
 				snapshot.havePodsWithAffinityNodeInfoList = append(snapshot.havePodsWithAffinityNodeInfoList, nodeInfo)
 			}
-			if len(nodeInfo.GetPodsWithRequiredAntiAffinity()) > 0 {
+			if len(nodeInfo.PodsWithRequiredAntiAffinity) > 0 {
 				snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = append(snapshot.havePodsWithRequiredAntiAffinityNodeInfoList, nodeInfo)
 			}
-			for key := range nodeInfo.GetPVCRefCounts() {
+			for key := range nodeInfo.PVCRefCounts {
 				snapshot.usedPVCSet.Insert(key)
 			}
+		} else {
+			utilruntime.HandleErrorWithLogger(logger, nil, "Node exists in nodeTree but not in NodeInfoMap, this should not happen", "node", klog.KRef("", nodeName))
+		}
+	}
+}
+
+func (cache *cacheImpl) updateNodeInfoSnapshotList(logger klog.Logger, snapshot *Snapshot, nodesRequiresUpdateUsedPVCSet sets.Set[string]) {
+	snapshot.havePodsWithAffinityNodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
+	snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = make([]fwk.NodeInfo, 0, cache.nodeTree.numNodes)
+	for _, nodeInfo := range snapshot.nodeInfoList {
+		if len(nodeInfo.GetPodsWithAffinity()) > 0 {
+			snapshot.havePodsWithAffinityNodeInfoList = append(snapshot.havePodsWithAffinityNodeInfoList, nodeInfo)
+		}
+		if len(nodeInfo.GetPodsWithRequiredAntiAffinity()) > 0 {
+			snapshot.havePodsWithRequiredAntiAffinityNodeInfoList = append(snapshot.havePodsWithRequiredAntiAffinityNodeInfoList, nodeInfo)
+		}
+		for key := range nodesRequiresUpdateUsedPVCSet {
+			snapshot.usedPVCSet.Insert(key)
 		}
 	}
 }
